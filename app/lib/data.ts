@@ -9,6 +9,8 @@ import {
   Revenue,
 } from './definitions';
 import { formatCurrency } from './utils';
+import { revalidatePath } from 'next/cache';
+
 
 export async function fetchRevenue() {
   // Add noStore() here to prevent the response from being cached.
@@ -19,7 +21,7 @@ export async function fetchRevenue() {
     // Don't do this in production :)
 
     // console.log('Fetching revenue data...');
-    // await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const data = await sql<Revenue>`SELECT * FROM revenue`;
 
@@ -45,6 +47,8 @@ export async function fetchLatestInvoices() {
       ...invoice,
       amount: formatCurrency(invoice.amount),
     }));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     return latestInvoices;
   } catch (error) {
     console.error('Database Error:', error);
@@ -74,7 +78,7 @@ export async function fetchCardData() {
     const numberOfCustomers = Number(data[1].rows[0].count ?? '0');
     const totalPaidInvoices = formatCurrency(data[2].rows[0].paid ?? '0');
     const totalPendingInvoices = formatCurrency(data[2].rows[0].pending ?? '0');
-
+    revalidatePath('/dashboard');
     return {
       numberOfCustomers,
       numberOfInvoices,
@@ -171,15 +175,27 @@ export async function fetchInvoiceById(id: string) {
 
 export async function fetchCustomers() {
   try {
-    const data = await sql<CustomerField>`
-      SELECT
-        id,
-        name
-      FROM customers
-      ORDER BY name ASC
+    const data = await sql<CustomersTableType>`
+    SELECT
+    customers.id,
+    customers.name,
+    customers.email,
+    customers.image_url,
+    COUNT(invoices.id) AS total_invoices,
+    SUM(CASE WHEN invoices.status = 'pending' THEN invoices.amount ELSE 0 END) AS total_pending,
+    SUM(CASE WHEN invoices.status = 'paid' THEN invoices.amount ELSE 0 END) AS total_paid
+    FROM customers
+    LEFT JOIN invoices ON customers.id = invoices.customer_id
+    GROUP BY customers.id, customers.name, customers.email, customers.image_url
+    ORDER BY customers.name ASC
     `;
-
-    const customers = data.rows;
+    
+    const customers = data.rows.map((customer) => ({
+      ...customer,
+      total_pending: formatCurrency(customer.total_pending),
+      total_paid: formatCurrency(customer.total_paid),
+    }));
+    revalidatePath('/dashboard/customers');
     return customers;
   } catch (err) {
     console.error('Database Error:', err);
@@ -229,3 +245,5 @@ export async function getUser(email: string) {
     throw new Error('Failed to fetch user.');
   }
 }
+
+
